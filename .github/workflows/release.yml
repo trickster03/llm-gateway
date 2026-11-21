@@ -1,0 +1,40 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write   # required for AWS OIDC federation
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REGISTRY: 537725238632.dkr.ecr.ap-south-1.amazonaws.com
+  IMAGE: llm-gateway
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::537725238632:role/github-actions-deployer
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          docker build -t "$ECR_REGISTRY/$IMAGE:$TAG" -t "$ECR_REGISTRY/$IMAGE:latest" .
+          docker push "$ECR_REGISTRY/$IMAGE:$TAG"
+          docker push "$ECR_REGISTRY/$IMAGE:latest"
+
+      # NOTE: the gateway needs a model backend (Ollama/vLLM) that a free-tier
+      # instance can't host, so it isn't deployed to the k3s cluster. Its run
+      # stays local where the model lives. The build+push above proves the
+      # pipeline; add a deploy step here once a GPU-backed target exists.
