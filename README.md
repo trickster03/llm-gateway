@@ -57,6 +57,15 @@ A model server (Ollama, vLLM) speaks the OpenAI API but has no notion of *who* i
 | `MAX_CONCURRENCY` | `8` | Max in-flight upstream requests |
 | `CACHE_TTL_SEC` | `60` | Response cache TTL |
 
+### Secrets
+
+Everything above is non-secret config and lives in the environment. **Secrets** (an upstream API key, a Redis password, client tokens) are never hardcoded and never committed:
+
+- **Locally:** export them or use a git-ignored `.env` (see `.env.example`).
+- **On AWS:** set `SECRET_ID` to a Secrets Manager secret holding a JSON object like `{"upstream_api_key": "..."}`. The typed `Settings` model (`app/config.py`, pydantic-settings) fetches it at startup and overlays those fields — the code never holds a plaintext secret. Requires `pip install boto3` and an IAM role with `secretsmanager:GetSecretValue` scoped to that secret.
+
+Endpoints and URLs (the Ollama upstream, ports) are **configuration, not secrets** — they stay as overridable env vars, not in Secrets Manager.
+
 ## Status
 
 Working skeleton: proxying, rate limiting, concurrency cap, cache, streaming, metrics, `/healthz`.
