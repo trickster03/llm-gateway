@@ -13,7 +13,7 @@ env:
   IMAGE: llm-gateway
 
 jobs:
-  build-and-push:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,18 @@ jobs:
           docker push "$ECR_REGISTRY/$IMAGE:$TAG"
           docker push "$ECR_REGISTRY/$IMAGE:latest"
 
-      # NOTE: the gateway needs a model backend (Ollama/vLLM) that a free-tier
-      # instance can't host, so it isn't deployed to the k3s cluster. Its run
-      # stays local where the model lives. The build+push above proves the
-      # pipeline; add a deploy step here once a GPU-backed target exists.
+      # The gateway proxy is lightweight, so it runs on the free-tier k3s box.
+      # The manifest is shipped base64-encoded (avoids YAML-in-JSON quoting) and
+      # applied on the box via SSM — the API server is never exposed publicly.
+      # The heavy model backend stays on-demand and is pointed at via
+      # UPSTREAM_BASE_URL; it is intentionally not deployed here.
+      - name: Deploy proxy to k3s (apply + rollout via SSM)
+        run: |
+          B64=$(base64 < deploy/k8s.yaml | tr -d '\n')
+          aws ssm send-command \
+            --region "$AWS_REGION" \
+            --document-name "AWS-RunShellScript" \
+            --targets "Key=tag:Role,Values=k3s" \
+            --comment "Deploy llm-gateway ${GITHUB_REF_NAME}" \
+            --parameters "commands=[\"echo $B64 | base64 -d > /tmp/llm-gateway.yaml\",\"/usr/local/bin/kubectl apply -f /tmp/llm-gateway.yaml\",\"/usr/local/bin/kubectl -n default rollout restart deployment/llm-gateway\",\"/usr/local/bin/kubectl -n default rollout status deployment/llm-gateway --timeout=120s\"]" \
+            --query 'Command.CommandId' --output text

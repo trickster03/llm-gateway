@@ -1,0 +1,50 @@
+# llm-gateway — the OpenAI-compatible proxy. It is deliberately lightweight
+# (FastAPI/uvicorn) so it runs on the free-tier k3s box. The *model backend*
+# (Ollama/vLLM) is NOT here: it is heavy and runs on-demand on a separate
+# instance, with UPSTREAM_BASE_URL pointed at it when a demo spins one up.
+# /healthz is static, so the pod is Ready even while no backend is wired.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: llm-gateway }
+  template:
+    metadata:
+      labels: { app: llm-gateway }
+    spec:
+      imagePullSecrets:
+        - name: ecr-creds          # shared host-refreshed ECR pull secret (same as floodgate)
+      containers:
+        - name: llm-gateway
+          image: 537725238632.dkr.ecr.ap-south-1.amazonaws.com/llm-gateway:latest
+          imagePullPolicy: Always   # always pull :latest on a rollout restart
+          ports: [{ containerPort: 8080 }]
+          env:
+            # Point this at the on-demand model backend when one is running
+            # (e.g. http://ollama:11434/v1). Until then the proxy is up and
+            # /healthz passes; only /v1/chat/completions needs the backend.
+            - { name: UPSTREAM_BASE_URL, value: "http://ollama:11434/v1" }
+            - { name: RATE_PER_SEC, value: "2" }
+            - { name: BURST, value: "10" }
+            - { name: MAX_CONCURRENCY, value: "8" }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 8
+          resources:
+            requests: { cpu: "50m", memory: "96Mi" }
+            limits: { cpu: "250m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+spec:
+  selector: { app: llm-gateway }
+  ports: [{ port: 80, targetPort: 8080 }]
+  type: ClusterIP
